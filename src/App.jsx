@@ -5,7 +5,7 @@ import { supabase } from './supabaseClient';
 const USER_CREDENTIALS = {
   emils: { password: 'emils123', playerId: '11111111-1111-1111-1111-111111111111' },
   peteris: { password: 'peteris123', playerId: '22222222-2222-2222-2222-222222222222' },
-  emils.sarmulis: { password: 'riskemils123', playerId: '33333333-3333-3333-3333-333333333333' },
+  emilssarmulis: { password: 'riskemils123', playerId: '33333333-3333-3333-3333-333333333333' },
 };
 
 // Achievement definitions
