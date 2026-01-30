@@ -1,82 +1,286 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 
-// Hardcoded users
-const USERS = {
-  emils: { username: 'emils', password: 'emils123', displayName: 'Emils', playerId: 'p1' },
-  peteris: { username: 'peteris', password: 'peteris123', displayName: 'Pēteris', playerId: 'p2' },
+// Hardcoded user credentials (passwords checked client-side)
+const USER_CREDENTIALS = {
+  emils: { password: 'emils123', playerId: '11111111-1111-1111-1111-111111111111' },
+  peteris: { password: 'peteris123', playerId: '22222222-2222-2222-2222-222222222222' },
 };
+
+// Achievement definitions
+const ACHIEVEMENTS = [
+  // Wins
+  { key: 'first_blood', name: 'First Blood', description: 'Win your first game', icon: '🎯' },
+  { key: 'getting_warmed_up', name: 'Getting Warmed Up', description: 'Win 5 games', icon: '🔥' },
+  { key: 'double_digits', name: 'Double Digits', description: 'Win 10 games', icon: '🔟' },
+  { key: 'quarter_century', name: 'Quarter Century', description: 'Win 25 games', icon: '🏅' },
+  { key: 'half_century', name: 'Half Century', description: 'Win 50 games', icon: '⭐' },
+  { key: 'centurion', name: 'Centurion', description: 'Win 100 games', icon: '💯' },
+  { key: 'legend', name: 'Legend', description: 'Win 250 games', icon: '👑' },
+  // Streaks
+  { key: 'hat_trick', name: 'Hat Trick', description: 'Win 3 games in a row', icon: '🎩' },
+  { key: 'on_fire', name: 'On Fire', description: 'Win 5 games in a row', icon: '🔥' },
+  { key: 'unstoppable', name: 'Unstoppable', description: 'Win 7 games in a row', icon: '💪' },
+  { key: 'dominant', name: 'Dominant', description: 'Win 10 games in a row', icon: '🦁' },
+  // Comebacks
+  { key: 'comeback_kid', name: 'Comeback Kid', description: 'Win after 3+ consecutive losses', icon: '🔄' },
+  { key: 'redemption_arc', name: 'Redemption Arc', description: 'Win after 5+ consecutive losses', icon: '🌅' },
+  // Rivalries
+  { key: 'rival', name: 'Rival', description: 'Play 10 games against the same opponent', icon: '🤝' },
+  { key: 'nemesis', name: 'Nemesis', description: 'Play 25 games against the same opponent', icon: '⚔️' },
+  { key: 'arch_enemy', name: 'Arch Enemy', description: 'Play 50 games against the same opponent', icon: '🏆' },
+  // Activity
+  { key: 'dedicated', name: 'Dedicated', description: 'Play games on 7 different days', icon: '📅' },
+  { key: 'regular', name: 'Regular', description: 'Play games on 30 different days', icon: '📆' },
+  { key: 'veteran', name: 'Veteran', description: 'Play games on 100 different days', icon: '🎖️' },
+  // Domination
+  { key: 'sweep', name: 'Sweep', description: 'Lead 5-0 against an opponent', icon: '🧹' },
+  { key: 'perfect_week', name: 'Perfect Week', description: 'Win every game in a week (min 3 games)', icon: '✨' },
+  // Social
+  { key: 'popular', name: 'Popular', description: 'Play against 3 different opponents', icon: '👥' },
+  { key: 'social_butterfly', name: 'Social Butterfly', description: 'Play against 5 different opponents', icon: '🦋' },
+  { key: 'the_challenger', name: 'The Challenger', description: 'Play against 10 different opponents', icon: '🌟' },
+];
 
 export default function App() {
   // Auth state
   const [currentUser, setCurrentUser] = useState(null);
+  const [players, setPlayers] = useState([]);
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
 
   // App state
+  const [activeTab, setActiveTab] = useState('matchups');
+  const [selectedOpponent, setSelectedOpponent] = useState(null);
   const [games, setGames] = useState([]);
+  const [achievements, setAchievements] = useState([]);
+  const [leaderboardPeriod, setLeaderboardPeriod] = useState('all');
+  
+  // Game form state
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [note, setNote] = useState('');
   const [showNoteInput, setShowNoteInput] = useState(false);
+  
+  // UI state
   const [darkMode, setDarkMode] = useState(false);
   const [toast, setToast] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [lastDeleted, setLastDeleted] = useState(null);
   const [justAdded, setJustAdded] = useState(null);
-  const [showAchievement, setShowAchievement] = useState(null);
+  const [showAchievementPopup, setShowAchievementPopup] = useState(null);
   const [loading, setLoading] = useState(true);
   const toastTimeout = useRef(null);
   
-  const players = { p1: 'Emils', p2: 'Pēteris' };
   const todayStr = new Date().toISOString().split('T')[0];
 
   // Load data on mount
   useEffect(() => {
     const load = async () => {
-      // Check saved session
-      const savedSession = localStorage.getItem('novuss-session');
+      const savedSession = localStorage.getItem('novuss-session-v3');
       if (savedSession) {
-        try {
-          setCurrentUser(JSON.parse(savedSession));
+        try { 
+          const parsed = JSON.parse(savedSession);
+          setCurrentUser(parsed); 
         } catch (e) {}
       }
-      
-      // Load dark mode
       const savedDarkMode = localStorage.getItem('novuss-dark-mode');
       if (savedDarkMode) setDarkMode(JSON.parse(savedDarkMode));
       
-      // Load games from Supabase
+      await loadPlayers();
       await loadGames();
+      setLoading(false);
     };
     load();
   }, []);
 
-  const loadGames = async () => {
-    setLoading(true);
+  // Load achievements when user logs in
+  useEffect(() => {
+    if (currentUser) {
+      loadAchievements();
+    }
+  }, [currentUser]);
+
+  const loadPlayers = async () => {
     try {
-      const { data, error } = await supabase
-        .from('games')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
+      const { data, error } = await supabase.from('players').select('*').order('display_name');
+      if (error) throw error;
+      setPlayers(data || []);
+    } catch (error) {
+      console.error('Error loading players:', error);
+    }
+  };
+
+  const loadGames = async () => {
+    try {
+      const { data, error } = await supabase.from('games').select('*').order('created_at', { ascending: false });
       if (error) throw error;
       setGames(data || []);
     } catch (error) {
       console.error('Error loading games:', error);
       showToast('Failed to load games', 'error');
     }
-    setLoading(false);
   };
 
-  const saveGame = async (gameData) => {
+  const loadAchievements = async () => {
+    if (!currentUser) return;
     try {
       const { data, error } = await supabase
-        .from('games')
-        .insert([gameData])
+        .from('achievements')
+        .select('*')
+        .eq('player_id', currentUser.id);
+      if (error) throw error;
+      setAchievements(data || []);
+    } catch (error) {
+      console.error('Error loading achievements:', error);
+    }
+  };
+
+  const unlockAchievement = async (achievementKey) => {
+    if (!currentUser) return;
+    if (achievements.find(a => a.achievement_key === achievementKey)) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('achievements')
+        .insert([{ player_id: currentUser.id, achievement_key: achievementKey }])
         .select()
         .single();
       
+      if (error && !error.message.includes('duplicate')) throw error;
+      if (data) {
+        setAchievements(prev => [...prev, data]);
+        const achievement = ACHIEVEMENTS.find(a => a.key === achievementKey);
+        if (achievement) {
+          setShowAchievementPopup(achievement);
+          setTimeout(() => setShowAchievementPopup(null), 3000);
+        }
+      }
+    } catch (error) {
+      console.error('Error unlocking achievement:', error);
+    }
+  };
+
+  const checkAllAchievements = async (allGames, currentPlayerId) => {
+    const myGames = allGames.filter(g => g.player1_id === currentPlayerId || g.player2_id === currentPlayerId);
+    const myWins = allGames.filter(g => g.winner_id === currentPlayerId);
+    
+    // Win milestones
+    const winMilestones = { 1: 'first_blood', 5: 'getting_warmed_up', 10: 'double_digits', 25: 'quarter_century', 50: 'half_century', 100: 'centurion', 250: 'legend' };
+    for (const [count, key] of Object.entries(winMilestones)) {
+      if (myWins.length >= parseInt(count)) await unlockAchievement(key);
+    }
+    
+    // Streak achievements
+    const sortedGames = [...myGames].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    let currentStreak = 0;
+    let maxStreak = 0;
+    for (const game of sortedGames) {
+      if (game.winner_id === currentPlayerId) {
+        currentStreak++;
+        maxStreak = Math.max(maxStreak, currentStreak);
+      } else {
+        break;
+      }
+    }
+    
+    if (maxStreak >= 3) await unlockAchievement('hat_trick');
+    if (maxStreak >= 5) await unlockAchievement('on_fire');
+    if (maxStreak >= 7) await unlockAchievement('unstoppable');
+    if (maxStreak >= 10) await unlockAchievement('dominant');
+    
+    // Comeback achievements
+    let loseStreak = 0;
+    for (let i = 1; i < sortedGames.length; i++) {
+      if (sortedGames[i].winner_id !== currentPlayerId) loseStreak++;
+      else break;
+    }
+    if (loseStreak >= 3 && sortedGames[0]?.winner_id === currentPlayerId) await unlockAchievement('comeback_kid');
+    if (loseStreak >= 5 && sortedGames[0]?.winner_id === currentPlayerId) await unlockAchievement('redemption_arc');
+    
+    // Rivalry achievements
+    const opponentCounts = {};
+    myGames.forEach(g => {
+      const oppId = g.player1_id === currentPlayerId ? g.player2_id : g.player1_id;
+      opponentCounts[oppId] = (opponentCounts[oppId] || 0) + 1;
+    });
+    const maxRivalry = Math.max(...Object.values(opponentCounts), 0);
+    if (maxRivalry >= 10) await unlockAchievement('rival');
+    if (maxRivalry >= 25) await unlockAchievement('nemesis');
+    if (maxRivalry >= 50) await unlockAchievement('arch_enemy');
+    
+    // Social achievements
+    const uniqueOpponents = Object.keys(opponentCounts).length;
+    if (uniqueOpponents >= 3) await unlockAchievement('popular');
+    if (uniqueOpponents >= 5) await unlockAchievement('social_butterfly');
+    if (uniqueOpponents >= 10) await unlockAchievement('the_challenger');
+    
+    // Activity achievements
+    const uniqueDays = new Set(myGames.map(g => g.date)).size;
+    if (uniqueDays >= 7) await unlockAchievement('dedicated');
+    if (uniqueDays >= 30) await unlockAchievement('regular');
+    if (uniqueDays >= 100) await unlockAchievement('veteran');
+    
+    // Sweep achievement (5-0 against any opponent)
+    for (const [oppId, count] of Object.entries(opponentCounts)) {
+      const vsOpp = myGames.filter(g => 
+        (g.player1_id === currentPlayerId && g.player2_id === oppId) ||
+        (g.player2_id === currentPlayerId && g.player1_id === oppId)
+      );
+      const myWinsVsOpp = vsOpp.filter(g => g.winner_id === currentPlayerId).length;
+      const theirWins = vsOpp.length - myWinsVsOpp;
+      if (myWinsVsOpp >= 5 && theirWins === 0) await unlockAchievement('sweep');
+    }
+    
+    // Perfect week
+    const now = new Date();
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - (now.getDay() === 0 ? 6 : now.getDay() - 1));
+    const weekStartStr = weekStart.toISOString().split('T')[0];
+    const thisWeekGames = myGames.filter(g => g.date >= weekStartStr);
+    if (thisWeekGames.length >= 3 && thisWeekGames.every(g => g.winner_id === currentPlayerId)) {
+      await unlockAchievement('perfect_week');
+    }
+  };
+
+  // Auth functions
+  const handleLogin = () => {
+    const creds = USER_CREDENTIALS[loginForm.username.toLowerCase()];
+    if (creds && creds.password === loginForm.password) {
+      const player = players.find(p => p.id === creds.playerId);
+      if (player) {
+        setCurrentUser(player);
+        setLoginError('');
+        if (rememberMe) {
+          localStorage.setItem('novuss-session-v3', JSON.stringify(player));
+        }
+        // Check achievements on login
+        setTimeout(() => checkAllAchievements(games, player.id), 500);
+      } else {
+        setLoginError('Player not found in database');
+      }
+    } else {
+      setLoginError('Invalid username or password');
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setSelectedOpponent(null);
+    setActiveTab('matchups');
+    localStorage.removeItem('novuss-session-v3');
+  };
+
+  const showToast = (message, type = 'info', duration = 3000) => {
+    if (toastTimeout.current) clearTimeout(toastTimeout.current);
+    setToast({ message, type });
+    toastTimeout.current = setTimeout(() => setToast(null), duration);
+  };
+
+  // Game functions
+  const saveGame = async (gameData) => {
+    try {
+      const { data, error } = await supabase.from('games').insert([gameData]).select().single();
       if (error) throw error;
       return data;
     } catch (error) {
@@ -86,97 +290,31 @@ export default function App() {
     }
   };
 
-  // Auth functions
-  const handleLogin = () => {
-    const user = Object.values(USERS).find(
-      u => u.username.toLowerCase() === loginForm.username.toLowerCase() && u.password === loginForm.password
-    );
-    if (user) {
-      setCurrentUser(user);
-      setLoginError('');
-      if (rememberMe) {
-        localStorage.setItem('novuss-session', JSON.stringify(user));
-      }
-    } else {
-      setLoginError('Invalid username or password');
-    }
-  };
-
-  const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem('novuss-session');
-  };
-
-  const showToast = (message, type = 'info', duration = 3000) => {
-    if (toastTimeout.current) clearTimeout(toastTimeout.current);
-    setToast({ message, type });
-    toastTimeout.current = setTimeout(() => setToast(null), duration);
-  };
-
-  // Achievement checker
-  const checkAchievements = (newGames, winner, user) => {
-    if (winner !== user.playerId) return;
+  const addGame = async (winnerId) => {
+    if (!currentUser || !selectedOpponent) return;
     
-    const myWins = newGames.filter(g => g.winner === user.playerId).length;
+    const gameData = {
+      date,
+      player1_id: currentUser.id,
+      player2_id: selectedOpponent.id,
+      winner_id: winnerId,
+      winner: winnerId === currentUser.id ? 'p1' : 'p2', // Keep for backwards compatibility
+      note: note.trim() || null
+    };
     
-    // Win milestones
-    const winMilestones = [1, 5, 10, 25, 50, 100];
-    if (winMilestones.includes(myWins)) {
-      const titles = { 1: 'First Blood!', 5: 'Getting Started!', 10: 'Double Digits!', 25: 'Quarter Century!', 50: 'Half Century!', 100: 'Centurion!' };
-      setShowAchievement({ title: titles[myWins], subtitle: `${myWins} wins achieved` });
-      setTimeout(() => setShowAchievement(null), 3000);
-      return;
-    }
-
-    // Streak achievements
-    const sorted = [...newGames].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    let streak = 0;
-    for (const game of sorted) {
-      if (game.winner === user.playerId) streak++;
-      else break;
-    }
-    const streakMilestones = [3, 5, 7, 10];
-    if (streakMilestones.includes(streak)) {
-      const titles = { 3: 'Hat Trick!', 5: 'On Fire!', 7: 'Unstoppable!', 10: 'Legendary!' };
-      setShowAchievement({ title: titles[streak], subtitle: `${streak} wins in a row` });
-      setTimeout(() => setShowAchievement(null), 3000);
-      return;
-    }
-
-    // Comeback achievement
-    if (sorted.length >= 4) {
-      let loseStreak = 0;
-      for (let i = 1; i < sorted.length; i++) {
-        if (sorted[i].winner !== user.playerId) loseStreak++;
-        else break;
-      }
-      if (loseStreak >= 3 && sorted[0].winner === user.playerId) {
-        setShowAchievement({ title: 'Comeback Kid!', subtitle: `Won after ${loseStreak} losses` });
-        setTimeout(() => setShowAchievement(null), 3000);
-        return;
-      }
-    }
-  };
-
-  const addGame = async (selectedWinner) => {
-    const gameData = { date, winner: selectedWinner, note: note.trim() || null };
     const savedGame = await saveGame(gameData);
-    
     if (savedGame) {
       const newGames = [savedGame, ...games];
       setGames(newGames);
       setNote('');
       setShowNoteInput(false);
-      
-      // Confirmation animation
       setJustAdded(savedGame.id);
       setTimeout(() => setJustAdded(null), 1500);
       
-      showToast(`${selectedWinner === 'p1' ? players.p1 : players.p2} wins!`, 'success');
+      const winnerName = winnerId === currentUser.id ? currentUser.display_name : selectedOpponent.display_name;
+      showToast(`${winnerName} wins!`, 'success');
       
-      if (currentUser) {
-        checkAchievements(newGames, selectedWinner, currentUser);
-      }
+      await checkAllAchievements(newGames, currentUser.id);
     }
   };
 
@@ -184,9 +322,7 @@ export default function App() {
     try {
       const gameToDelete = games.find(g => g.id === id);
       const { error } = await supabase.from('games').delete().eq('id', id);
-      
       if (error) throw error;
-      
       setGames(games.filter(g => g.id !== id));
       setLastDeleted(gameToDelete);
       setDeleteConfirm(null);
@@ -202,9 +338,7 @@ export default function App() {
     try {
       const { id, created_at, ...gameData } = lastDeleted;
       const { data, error } = await supabase.from('games').insert([gameData]).select().single();
-      
       if (error) throw error;
-      
       setGames([data, ...games].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
       setLastDeleted(null);
       setToast(null);
@@ -215,148 +349,70 @@ export default function App() {
     }
   };
 
-  // Stats calculations
-  const getStats = (gamesList) => ({
-    wins1: gamesList.filter(g => g.winner === 'p1').length,
-    wins2: gamesList.filter(g => g.winner === 'p2').length,
-    total: gamesList.length
-  });
-
-  const now = new Date();
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - (now.getDay() === 0 ? 6 : now.getDay() - 1));
-  const weekStartStr = startOfWeek.toISOString().split('T')[0];
-  const monthStartStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-
-  const weeklyGames = games.filter(g => g.date >= weekStartStr && g.date <= todayStr);
-  const monthlyGames = games.filter(g => g.date >= monthStartStr && g.date <= todayStr);
-  const totalStats = getStats(games);
-  const weeklyStats = getStats(weeklyGames);
-  const monthlyStats = getStats(monthlyGames);
-
-  const winPct = games.length === 0 ? { p1: 0, p2: 0 } : { 
-    p1: Math.round((totalStats.wins1 / games.length) * 100),
-    p2: Math.round((totalStats.wins2 / games.length) * 100)
+  // Helper functions
+  const getH2HGames = (opponentId) => {
+    if (!currentUser) return [];
+    return games.filter(g =>
+      (g.player1_id === currentUser.id && g.player2_id === opponentId) ||
+      (g.player2_id === currentUser.id && g.player1_id === opponentId)
+    );
   };
 
-  // Monthly breakdown for chart
-  const getMonthlyBreakdown = () => {
-    const months = {};
-    games.forEach(game => {
-      const monthKey = game.date.substring(0, 7);
-      if (!months[monthKey]) months[monthKey] = { p1: 0, p2: 0 };
-      months[monthKey][game.winner]++;
+  const getH2HStats = (opponentId) => {
+    const h2hGames = getH2HGames(opponentId);
+    const myWins = h2hGames.filter(g => g.winner_id === currentUser?.id).length;
+    const theirWins = h2hGames.length - myWins;
+    const lastGame = h2hGames[0];
+    return { myWins, theirWins, total: h2hGames.length, lastGame };
+  };
+
+  const getLeaderboardData = () => {
+    let filteredGames = games;
+    const now = new Date();
+    
+    if (leaderboardPeriod === 'week') {
+      const weekStart = new Date(now);
+      weekStart.setDate(now.getDate() - (now.getDay() === 0 ? 6 : now.getDay() - 1));
+      const weekStartStr = weekStart.toISOString().split('T')[0];
+      filteredGames = games.filter(g => g.date >= weekStartStr);
+    } else if (leaderboardPeriod === 'month') {
+      const monthStartStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+      filteredGames = games.filter(g => g.date >= monthStartStr);
+    }
+    
+    const playerStats = {};
+    players.forEach(p => {
+      playerStats[p.id] = { player: p, wins: 0, games: 0 };
     });
     
-    const sortedMonths = Object.keys(months).sort().slice(-6);
-    return sortedMonths.map(key => ({
-      month: new Date(key + '-01').toLocaleDateString('en', { month: 'short' }),
-      p1: months[key].p1,
-      p2: months[key].p2,
-    }));
-  };
-
-  // Win rate trend vs last month
-  const getWinRateTrend = () => {
-    if (games.length < 5) return null;
+    filteredGames.forEach(g => {
+      if (playerStats[g.player1_id]) playerStats[g.player1_id].games++;
+      if (playerStats[g.player2_id]) playerStats[g.player2_id].games++;
+      if (playerStats[g.winner_id]) playerStats[g.winner_id].wins++;
+    });
     
-    const lastMonth = new Date();
-    lastMonth.setMonth(lastMonth.getMonth() - 1);
-    const lastMonthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`;
-    const thisMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    
-    const lastMonthGames = games.filter(g => g.date.startsWith(lastMonthStr));
-    const thisMonthGames = games.filter(g => g.date.startsWith(thisMonthStr));
-    
-    if (lastMonthGames.length < 2 || thisMonthGames.length < 2) return null;
-    
-    const lastMonthRate = {
-      p1: lastMonthGames.filter(g => g.winner === 'p1').length / lastMonthGames.length * 100,
-      p2: lastMonthGames.filter(g => g.winner === 'p2').length / lastMonthGames.length * 100,
-    };
-    const thisMonthRate = {
-      p1: thisMonthGames.filter(g => g.winner === 'p1').length / thisMonthGames.length * 100,
-      p2: thisMonthGames.filter(g => g.winner === 'p2').length / thisMonthGames.length * 100,
-    };
-    
-    return {
-      p1: Math.round(thisMonthRate.p1 - lastMonthRate.p1),
-      p2: Math.round(thisMonthRate.p2 - lastMonthRate.p2),
-    };
+    return Object.values(playerStats)
+      .filter(s => s.games > 0)
+      .sort((a, b) => b.wins - a.wins || (b.wins / b.games) - (a.wins / a.games));
   };
-
-  const getStreak = () => {
-    if (games.length === 0) return null;
-    const sorted = [...games].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    let count = 0;
-    for (const game of sorted) {
-      if (game.winner === sorted[0].winner) count++;
-      else break;
-    }
-    return { player: sorted[0].winner === 'p1' ? players.p1 : players.p2, playerId: sorted[0].winner, count };
-  };
-
-  const getBestStreak = () => {
-    if (games.length === 0) return { p1: 0, p2: 0 };
-    const sorted = [...games].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    let bestP1 = 0, bestP2 = 0, current = 0, currentPlayer = null;
-    for (const game of sorted) {
-      if (game.winner === currentPlayer) current++;
-      else { current = 1; currentPlayer = game.winner; }
-      if (currentPlayer === 'p1' && current > bestP1) bestP1 = current;
-      else if (currentPlayer === 'p2' && current > bestP2) bestP2 = current;
-    }
-    return { p1: bestP1, p2: bestP2 };
-  };
-
-  const getRecentForm = () => {
-    const recent = [...games].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
-    return { p1: recent.filter(g => g.winner === 'p1').length, p2: recent.filter(g => g.winner === 'p2').length };
-  };
-
-  const streak = getStreak();
-  const bestStreaks = getBestStreak();
-  const recentForm = getRecentForm();
-  const monthlyBreakdown = getMonthlyBreakdown();
-  const winRateTrend = getWinRateTrend();
 
   // Theme
   const theme = {
-    light: {
-      bg: '#F8F9FA',
-      card: '#FFFFFF',
-      text: '#1A1A2E',
-      textSecondary: '#6B7280',
-      textMuted: '#9CA3AF',
-      border: '#E5E7EB',
-      rowBg: '#F3F4F6',
-      buttonBg: '#1A1A2E',
-      buttonText: '#FFFFFF',
-      inputBg: '#FFFFFF',
-    },
-    dark: {
-      bg: '#111113',
-      card: '#1C1C1E',
-      text: '#F5F5F7',
-      textSecondary: '#A1A1A6',
-      textMuted: '#6E6E73',
-      border: '#2C2C2E',
-      rowBg: '#242426',
-      buttonBg: '#F5F5F7',
-      buttonText: '#111113',
-      inputBg: '#242426',
-    },
+    light: { bg: '#F8F9FA', card: '#FFFFFF', text: '#1A1A2E', textSecondary: '#6B7280', textMuted: '#9CA3AF', border: '#E5E7EB', rowBg: '#F3F4F6', buttonBg: '#1A1A2E', buttonText: '#FFFFFF', inputBg: '#FFFFFF' },
+    dark: { bg: '#111113', card: '#1C1C1E', text: '#F5F5F7', textSecondary: '#A1A1A6', textMuted: '#6E6E73', border: '#2C2C2E', rowBg: '#242426', buttonBg: '#F5F5F7', buttonText: '#111113', inputBg: '#242426' },
     green: '#22C55E',
     greenBg: darkMode ? 'rgba(34, 197, 94, 0.15)' : 'rgba(34, 197, 94, 0.12)',
     greenBgStrong: darkMode ? 'rgba(34, 197, 94, 0.25)' : 'rgba(34, 197, 94, 0.18)',
     red: '#EF4444',
     redBg: darkMode ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.12)',
+    gold: '#F59E0B',
+    silver: '#9CA3AF',
+    bronze: '#CD7F32',
   };
-
   const c = darkMode ? theme.dark : theme.light;
 
   // Loading screen
-  if (loading && !currentUser) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: c.bg }}>
         <div style={{ color: c.textMuted }}>Loading...</div>
@@ -373,7 +429,6 @@ export default function App() {
             <h1 className="text-4xl font-bold mb-2" style={{ color: c.text }}>Novuss</h1>
             <p style={{ color: c.textSecondary }}>Track your games</p>
           </div>
-          
           <div className="rounded-2xl shadow-sm p-6" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
             <div className="space-y-4">
               <div>
@@ -382,51 +437,36 @@ export default function App() {
                   type="text"
                   value={loginForm.username}
                   onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                   className="w-full p-3 rounded-xl"
                   style={{ backgroundColor: c.inputBg, color: c.text, border: `1px solid ${c.border}` }}
                   placeholder="Enter username"
                 />
               </div>
-              
               <div>
                 <label className="block text-sm font-medium mb-2" style={{ color: c.textSecondary }}>Password</label>
                 <input
                   type="password"
                   value={loginForm.password}
                   onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                   className="w-full p-3 rounded-xl"
                   style={{ backgroundColor: c.inputBg, color: c.text, border: `1px solid ${c.border}` }}
                   placeholder="Enter password"
                 />
               </div>
-
               <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="remember"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="w-4 h-4 rounded"
-                />
+                <input type="checkbox" id="remember" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} className="w-4 h-4 rounded" />
                 <label htmlFor="remember" className="text-sm" style={{ color: c.textSecondary }}>Remember me</label>
               </div>
-
               {loginError && (
-                <div className="text-sm text-center py-2 px-3 rounded-lg" style={{ backgroundColor: theme.redBg, color: theme.red }}>
-                  {loginError}
-                </div>
+                <div className="text-sm text-center py-2 px-3 rounded-lg" style={{ backgroundColor: theme.redBg, color: theme.red }}>{loginError}</div>
               )}
-
-              <button
-                onClick={handleLogin}
-                className="w-full py-3 rounded-xl font-semibold"
-                style={{ backgroundColor: c.buttonBg, color: c.buttonText }}
-              >
+              <button onClick={handleLogin} className="w-full py-3 rounded-xl font-semibold" style={{ backgroundColor: c.buttonBg, color: c.buttonText }}>
                 Sign In
               </button>
             </div>
           </div>
-
           <button
             onClick={() => { setDarkMode(!darkMode); localStorage.setItem('novuss-dark-mode', JSON.stringify(!darkMode)); }}
             className="mx-auto mt-6 block p-2 rounded-lg"
@@ -439,398 +479,597 @@ export default function App() {
     );
   }
 
-  // Main App Components
-  const StatBox = ({ title, stats, period }) => (
-    <div className="rounded-2xl shadow-sm p-5" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
-      <h3 className="text-sm font-medium mb-3" style={{ color: c.textSecondary }}>{title}</h3>
-      {stats.total === 0 ? (
-        <div className="text-center py-4 text-sm" style={{ color: c.textMuted }}>No games {period}</div>
-      ) : (
-        <div className="flex items-center justify-between">
-          <div className="text-center flex-1 p-3 rounded-xl" style={stats.wins1 > stats.wins2 ? { backgroundColor: theme.greenBg } : stats.wins1 < stats.wins2 ? { backgroundColor: theme.redBg } : {}}>
-            <div className="text-2xl font-bold" style={{ color: stats.wins1 > stats.wins2 ? theme.green : stats.wins1 < stats.wins2 ? theme.red : c.text }}>{stats.wins1}</div>
-            <div className="text-xs" style={{ color: c.textSecondary }}>{players.p1}</div>
+  // Get opponents (all players except current user)
+  const opponents = players.filter(p => p.id !== currentUser.id);
+
+  // H2H Detail View
+  if (selectedOpponent) {
+    const h2hGames = getH2HGames(selectedOpponent.id);
+    const stats = getH2HStats(selectedOpponent.id);
+    
+    // Calculate additional stats
+    const now = new Date();
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - (now.getDay() === 0 ? 6 : now.getDay() - 1));
+    const weekStartStr = weekStart.toISOString().split('T')[0];
+    const monthStartStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    
+    const weeklyGames = h2hGames.filter(g => g.date >= weekStartStr);
+    const monthlyGames = h2hGames.filter(g => g.date >= monthStartStr);
+    const weeklyStats = {
+      myWins: weeklyGames.filter(g => g.winner_id === currentUser.id).length,
+      theirWins: weeklyGames.filter(g => g.winner_id === selectedOpponent.id).length,
+      total: weeklyGames.length
+    };
+    const monthlyStats = {
+      myWins: monthlyGames.filter(g => g.winner_id === currentUser.id).length,
+      theirWins: monthlyGames.filter(g => g.winner_id === selectedOpponent.id).length,
+      total: monthlyGames.length
+    };
+    
+    // Streak
+    const getStreak = () => {
+      if (h2hGames.length === 0) return null;
+      let count = 0;
+      const firstWinner = h2hGames[0].winner_id;
+      for (const game of h2hGames) {
+        if (game.winner_id === firstWinner) count++;
+        else break;
+      }
+      return { playerId: firstWinner, count };
+    };
+    const streak = getStreak();
+    
+    // Win percentages
+    const winPct = stats.total === 0 ? { me: 0, them: 0 } : {
+      me: Math.round((stats.myWins / stats.total) * 100),
+      them: Math.round((stats.theirWins / stats.total) * 100)
+    };
+    
+    // Best streaks
+    const getBestStreaks = () => {
+      if (h2hGames.length === 0) return { me: 0, them: 0 };
+      const sorted = [...h2hGames].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      let bestMe = 0, bestThem = 0, current = 0, currentPlayer = null;
+      for (const game of sorted) {
+        if (game.winner_id === currentPlayer) current++;
+        else { current = 1; currentPlayer = game.winner_id; }
+        if (currentPlayer === currentUser.id && current > bestMe) bestMe = current;
+        else if (currentPlayer === selectedOpponent.id && current > bestThem) bestThem = current;
+      }
+      return { me: bestMe, them: bestThem };
+    };
+    const bestStreaks = getBestStreaks();
+    
+    // Recent form (last 5)
+    const recentForm = {
+      me: h2hGames.slice(0, 5).filter(g => g.winner_id === currentUser.id).length,
+      them: h2hGames.slice(0, 5).filter(g => g.winner_id === selectedOpponent.id).length
+    };
+    
+    // Monthly breakdown
+    const getMonthlyBreakdown = () => {
+      const months = {};
+      h2hGames.forEach(game => {
+        const monthKey = game.date.substring(0, 7);
+        if (!months[monthKey]) months[monthKey] = { me: 0, them: 0 };
+        if (game.winner_id === currentUser.id) months[monthKey].me++;
+        else months[monthKey].them++;
+      });
+      const sortedMonths = Object.keys(months).sort().slice(-6);
+      return sortedMonths.map(key => ({
+        month: new Date(key + '-01').toLocaleDateString('en', { month: 'short' }),
+        me: months[key].me,
+        them: months[key].them,
+      }));
+    };
+    const monthlyBreakdown = getMonthlyBreakdown();
+
+    const StatBox = ({ title, myWins, theirWins, total, period }) => (
+      <div className="rounded-2xl shadow-sm p-5" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
+        <h3 className="text-sm font-medium mb-3" style={{ color: c.textSecondary }}>{title}</h3>
+        {total === 0 ? (
+          <div className="text-center py-4 text-sm" style={{ color: c.textMuted }}>No games {period}</div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <div className="text-center flex-1 p-3 rounded-xl" style={myWins > theirWins ? { backgroundColor: theme.greenBg } : myWins < theirWins ? { backgroundColor: theme.redBg } : {}}>
+              <div className="text-2xl font-bold" style={{ color: myWins > theirWins ? theme.green : myWins < theirWins ? theme.red : c.text }}>{myWins}</div>
+              <div className="text-xs" style={{ color: c.textSecondary }}>{currentUser.display_name}</div>
+            </div>
+            <div className="px-3" style={{ color: c.textMuted }}>–</div>
+            <div className="text-center flex-1 p-3 rounded-xl" style={theirWins > myWins ? { backgroundColor: theme.greenBg } : theirWins < myWins ? { backgroundColor: theme.redBg } : {}}>
+              <div className="text-2xl font-bold" style={{ color: theirWins > myWins ? theme.green : theirWins < myWins ? theme.red : c.text }}>{theirWins}</div>
+              <div className="text-xs" style={{ color: c.textSecondary }}>{selectedOpponent.display_name}</div>
+            </div>
           </div>
-          <div className="px-3" style={{ color: c.textMuted }}>–</div>
-          <div className="text-center flex-1 p-3 rounded-xl" style={stats.wins2 > stats.wins1 ? { backgroundColor: theme.greenBg } : stats.wins2 < stats.wins1 ? { backgroundColor: theme.redBg } : {}}>
-            <div className="text-2xl font-bold" style={{ color: stats.wins2 > stats.wins1 ? theme.green : stats.wins2 < stats.wins1 ? theme.red : c.text }}>{stats.wins2}</div>
-            <div className="text-xs" style={{ color: c.textSecondary }}>{players.p2}</div>
+        )}
+      </div>
+    );
+
+    const MonthlyChart = ({ data }) => {
+      if (data.length === 0) return null;
+      const maxValue = Math.max(...data.flatMap(d => [d.me, d.them]), 1);
+      return (
+        <div className="rounded-2xl shadow-sm p-5" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
+          <h3 className="text-sm font-medium mb-4" style={{ color: c.textSecondary }}>Monthly Breakdown</h3>
+          <div className="space-y-3">
+            {data.map((month, i) => (
+              <div key={i} className="space-y-1">
+                <div className="text-xs" style={{ color: c.textMuted }}>{month.month}</div>
+                <div className="flex gap-1 h-6">
+                  <div className="rounded-l flex items-center justify-end pr-1 text-xs font-medium text-white"
+                    style={{ backgroundColor: theme.green, width: `${Math.max((month.me / maxValue) * 50, month.me > 0 ? 15 : 0)}%`, minWidth: month.me > 0 ? '20px' : '0' }}>
+                    {month.me > 0 && month.me}
+                  </div>
+                  <div className="rounded-r flex items-center justify-start pl-1 text-xs font-medium text-white"
+                    style={{ backgroundColor: theme.red, width: `${Math.max((month.them / maxValue) * 50, month.them > 0 ? 15 : 0)}%`, minWidth: month.them > 0 ? '20px' : '0' }}>
+                    {month.them > 0 && month.them}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-center gap-6 mt-4 text-xs" style={{ color: c.textSecondary }}>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded" style={{ backgroundColor: theme.green }}></span> {currentUser.display_name}</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded" style={{ backgroundColor: theme.red }}></span> {selectedOpponent.display_name}</span>
           </div>
         </div>
-      )}
-    </div>
-  );
+      );
+    };
 
-  const MonthlyChart = ({ data }) => {
-    if (data.length === 0) return null;
-    const maxValue = Math.max(...data.flatMap(d => [d.p1, d.p2]), 1);
-    
     return (
-      <div className="rounded-2xl shadow-sm p-5" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
-        <h3 className="text-sm font-medium mb-4" style={{ color: c.textSecondary }}>Monthly Breakdown</h3>
-        <div className="space-y-3">
-          {data.map((month, i) => (
-            <div key={i} className="space-y-1">
-              <div className="text-xs" style={{ color: c.textMuted }}>{month.month}</div>
-              <div className="flex gap-1 h-6">
-                <div 
-                  className="rounded-l flex items-center justify-end pr-1 text-xs font-medium text-white"
-                  style={{ 
-                    backgroundColor: theme.green, 
-                    width: `${Math.max((month.p1 / maxValue) * 50, month.p1 > 0 ? 15 : 0)}%`,
-                    minWidth: month.p1 > 0 ? '20px' : '0'
-                  }}
-                >
-                  {month.p1 > 0 && month.p1}
-                </div>
-                <div 
-                  className="rounded-r flex items-center justify-start pl-1 text-xs font-medium text-white"
-                  style={{ 
-                    backgroundColor: theme.red, 
-                    width: `${Math.max((month.p2 / maxValue) * 50, month.p2 > 0 ? 15 : 0)}%`,
-                    minWidth: month.p2 > 0 ? '20px' : '0'
-                  }}
-                >
-                  {month.p2 > 0 && month.p2}
+      <div className="min-h-screen p-4 md:p-8" style={{ backgroundColor: c.bg }}>
+        <div className="max-w-2xl mx-auto">
+          {/* Toast */}
+          {toast && (
+            <div onClick={toast.type === 'undo' ? undoDelete : undefined} className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-xl shadow-lg cursor-pointer font-medium"
+              style={{ backgroundColor: toast.type === 'success' ? theme.green : toast.type === 'error' ? theme.red : c.card, color: toast.type === 'success' || toast.type === 'error' ? '#FFFFFF' : c.text, border: toast.type === 'undo' ? `1px solid ${c.border}` : 'none' }}>
+              {toast.message}
+            </div>
+          )}
+
+          {/* Achievement popup */}
+          {showAchievementPopup && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="p-8 rounded-3xl shadow-2xl text-center" style={{ backgroundColor: c.card }}>
+                <div className="text-5xl mb-3">{showAchievementPopup.icon}</div>
+                <div className="text-2xl font-bold mb-1" style={{ color: theme.green }}>{showAchievementPopup.name}</div>
+                <div style={{ color: c.textSecondary }}>{showAchievementPopup.description}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Delete Confirm Modal */}
+          {deleteConfirm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="p-6 rounded-2xl shadow-xl w-full max-w-sm" style={{ backgroundColor: c.card }}>
+                <h3 className="text-lg font-semibold mb-2" style={{ color: c.text }}>Delete Game?</h3>
+                <p className="mb-4" style={{ color: c.textSecondary }}>This will update all stats.</p>
+                <div className="flex gap-3">
+                  <button onClick={() => setDeleteConfirm(null)} className="flex-1 py-2.5 rounded-xl font-medium" style={{ backgroundColor: c.rowBg, color: c.text }}>Cancel</button>
+                  <button onClick={() => deleteGame(deleteConfirm)} className="flex-1 py-2.5 rounded-xl font-medium text-white" style={{ backgroundColor: theme.red }}>Delete</button>
                 </div>
               </div>
             </div>
-          ))}
-        </div>
-        <div className="flex justify-center gap-6 mt-4 text-xs" style={{ color: c.textSecondary }}>
-          <span className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded" style={{ backgroundColor: theme.green }}></span> {players.p1}
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded" style={{ backgroundColor: theme.red }}></span> {players.p2}
-          </span>
+          )}
+
+          {/* Header with back button */}
+          <div className="flex items-center gap-4 mb-6">
+            <button onClick={() => setSelectedOpponent(null)} className="p-2 rounded-xl" style={{ backgroundColor: c.rowBg }}>
+              <span style={{ color: c.text }}>←</span>
+            </button>
+            <div className="flex-1">
+              <h1 className="text-2xl font-bold" style={{ color: c.text }}>vs {selectedOpponent.display_name}</h1>
+              <p className="text-sm" style={{ color: c.textSecondary }}>Head-to-head matchup</p>
+            </div>
+            <button onClick={() => { setDarkMode(!darkMode); localStorage.setItem('novuss-dark-mode', JSON.stringify(!darkMode)); }}
+              className="w-10 h-10 rounded-xl flex items-center justify-center text-lg" style={{ backgroundColor: c.rowBg, color: c.textSecondary }}>
+              {darkMode ? '☀' : '☾'}
+            </button>
+          </div>
+
+          {/* All Time Score */}
+          <div className="rounded-2xl shadow-sm p-6 mb-6" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
+            <h2 className="text-sm font-medium mb-4 text-center" style={{ color: c.textSecondary }}>All Time</h2>
+            {stats.total === 0 ? (
+              <div className="text-center py-8" style={{ color: c.textMuted }}>No games yet. Add your first game below!</div>
+            ) : (
+              <div className="flex items-center justify-center gap-4">
+                <div className="text-center p-6 rounded-2xl flex-1 transition-all duration-300"
+                  style={stats.myWins > stats.theirWins ? { backgroundColor: theme.greenBgStrong, border: `2px solid ${theme.green}` } : stats.myWins < stats.theirWins ? { backgroundColor: theme.redBg, border: `2px solid ${theme.red}` } : { backgroundColor: c.rowBg }}>
+                  <div className="text-4xl font-bold" style={{ color: stats.myWins > stats.theirWins ? theme.green : stats.myWins < stats.theirWins ? theme.red : c.text }}>{stats.myWins}</div>
+                  <div className="text-sm font-medium mt-1" style={{ color: c.textSecondary }}>{currentUser.display_name}</div>
+                </div>
+                <div className="text-2xl font-light" style={{ color: c.textMuted }}>:</div>
+                <div className="text-center p-6 rounded-2xl flex-1 transition-all duration-300"
+                  style={stats.theirWins > stats.myWins ? { backgroundColor: theme.greenBgStrong, border: `2px solid ${theme.green}` } : stats.theirWins < stats.myWins ? { backgroundColor: theme.redBg, border: `2px solid ${theme.red}` } : { backgroundColor: c.rowBg }}>
+                  <div className="text-4xl font-bold" style={{ color: stats.theirWins > stats.myWins ? theme.green : stats.theirWins < stats.myWins ? theme.red : c.text }}>{stats.theirWins}</div>
+                  <div className="text-sm font-medium mt-1" style={{ color: c.textSecondary }}>{selectedOpponent.display_name}</div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Add Game */}
+          <div className="rounded-2xl shadow-sm p-6 mb-6" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
+            <h2 className="text-lg font-semibold mb-4" style={{ color: c.text }}>Add Game</h2>
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="flex-1 p-3 rounded-xl"
+                  style={{ backgroundColor: c.inputBg, color: c.text, border: `1px solid ${c.border}` }} />
+                <button onClick={() => setDate(todayStr)} className="px-4 rounded-xl font-medium"
+                  style={date === todayStr ? { backgroundColor: c.buttonBg, color: c.buttonText } : { backgroundColor: c.rowBg, color: c.text, border: `1px solid ${c.border}` }}>
+                  Today
+                </button>
+              </div>
+              <div>
+                <button onClick={() => setShowNoteInput(!showNoteInput)} className="text-sm" style={{ color: c.textSecondary }}>
+                  + {showNoteInput ? 'Hide note' : 'Add note'}
+                </button>
+                {showNoteInput && (
+                  <input type="text" placeholder="e.g., Lunch break game..." value={note} onChange={(e) => setNote(e.target.value)}
+                    className="w-full mt-2 p-3 rounded-xl" style={{ backgroundColor: c.inputBg, color: c.text, border: `1px solid ${c.border}` }} maxLength={100} />
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button onClick={() => addGame(currentUser.id)} className="py-4 font-semibold rounded-xl transition-transform active:scale-95"
+                  style={{ backgroundColor: c.buttonBg, color: c.buttonText }}>
+                  {currentUser.display_name} won
+                </button>
+                <button onClick={() => addGame(selectedOpponent.id)} className="py-4 font-semibold rounded-xl transition-transform active:scale-95"
+                  style={{ backgroundColor: c.buttonBg, color: c.buttonText }}>
+                  {selectedOpponent.display_name} won
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Stats */}
+          {stats.total > 0 && (
+            <>
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <StatBox title="This Week" myWins={weeklyStats.myWins} theirWins={weeklyStats.theirWins} total={weeklyStats.total} period="this week" />
+                <StatBox title="This Month" myWins={monthlyStats.myWins} theirWins={monthlyStats.theirWins} total={monthlyStats.total} period="this month" />
+              </div>
+
+              {streak && streak.count >= 3 && (
+                <div className="rounded-2xl shadow-sm p-5 mb-6 text-center" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
+                  <span className="text-2xl font-bold" style={{ color: theme.green }}>
+                    {streak.playerId === currentUser.id ? currentUser.display_name : selectedOpponent.display_name}
+                  </span>
+                  <span className="text-lg ml-2" style={{ color: c.textSecondary }}>is on a</span>
+                  <span className="text-2xl font-bold ml-2" style={{ color: theme.green }}>{streak.count} game</span>
+                  <span className="text-lg ml-1" style={{ color: c.textSecondary }}>streak!</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                <div className="rounded-2xl shadow-sm p-4" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
+                  <h3 className="text-xs font-medium mb-3" style={{ color: c.textSecondary }}>Win Rate</h3>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs" style={{ color: c.textSecondary }}>{currentUser.display_name}</span>
+                      <span className="text-base font-bold" style={{ color: winPct.me >= winPct.them ? theme.green : theme.red }}>{winPct.me}%</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs" style={{ color: c.textSecondary }}>{selectedOpponent.display_name}</span>
+                      <span className="text-base font-bold" style={{ color: winPct.them > winPct.me ? theme.green : theme.red }}>{winPct.them}%</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-2xl shadow-sm p-4" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
+                  <h3 className="text-xs font-medium mb-3" style={{ color: c.textSecondary }}>Best Streak</h3>
+                  <div className="text-center">
+                    <div className="text-base" style={{ color: theme.green }}>★</div>
+                    <div className="text-sm font-bold" style={{ color: theme.green }}>
+                      {bestStreaks.me >= bestStreaks.them ? currentUser.display_name : selectedOpponent.display_name}
+                    </div>
+                    <div className="text-base font-bold" style={{ color: c.text }}>{Math.max(bestStreaks.me, bestStreaks.them)}</div>
+                  </div>
+                </div>
+                <div className="rounded-2xl shadow-sm p-4" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
+                  <h3 className="text-xs font-medium mb-3" style={{ color: c.textSecondary }}>Last 5</h3>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs" style={{ color: c.textSecondary }}>{currentUser.display_name}</span>
+                      <span className="text-base font-bold" style={{ color: recentForm.me >= recentForm.them ? theme.green : theme.red }}>{recentForm.me}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs" style={{ color: c.textSecondary }}>{selectedOpponent.display_name}</span>
+                      <span className="text-base font-bold" style={{ color: recentForm.them > recentForm.me ? theme.green : theme.red }}>{recentForm.them}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {monthlyBreakdown.length > 1 && <div className="mb-6"><MonthlyChart data={monthlyBreakdown} /></div>}
+            </>
+          )}
+
+          {/* Game History */}
+          <div className="rounded-2xl shadow-sm p-6" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
+            <h2 className="text-lg font-semibold mb-4" style={{ color: c.text }}>Game History ({h2hGames.length})</h2>
+            {h2hGames.length === 0 ? (
+              <div className="text-center py-8" style={{ color: c.textMuted }}>Your game history will appear here.</div>
+            ) : (
+              <div className="space-y-2">
+                {h2hGames.map((game) => (
+                  <div key={game.id} className="p-3 rounded-xl transition-all duration-500"
+                    style={{ backgroundColor: justAdded === game.id ? theme.greenBg : c.rowBg, transform: justAdded === game.id ? 'scale(1.02)' : 'scale(1)' }}>
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm w-14" style={{ color: c.textMuted }}>
+                        {new Date(game.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                      </div>
+                      <div className="flex items-center gap-2 flex-1 justify-center">
+                        <span className="text-sm font-medium" style={{ color: game.winner_id === currentUser.id ? c.text : c.textMuted }}>{currentUser.display_name}</span>
+                        <span className="text-xs font-bold px-2 py-1 rounded"
+                          style={{ backgroundColor: game.winner_id === currentUser.id ? theme.greenBg : theme.redBg, color: game.winner_id === currentUser.id ? theme.green : theme.red }}>
+                          {game.winner_id === currentUser.id ? 'W' : 'L'}
+                        </span>
+                        <span style={{ color: c.textMuted }}>–</span>
+                        <span className="text-xs font-bold px-2 py-1 rounded"
+                          style={{ backgroundColor: game.winner_id === selectedOpponent.id ? theme.greenBg : theme.redBg, color: game.winner_id === selectedOpponent.id ? theme.green : theme.red }}>
+                          {game.winner_id === selectedOpponent.id ? 'W' : 'L'}
+                        </span>
+                        <span className="text-sm font-medium" style={{ color: game.winner_id === selectedOpponent.id ? c.text : c.textMuted }}>{selectedOpponent.display_name}</span>
+                      </div>
+                      <button onClick={() => setDeleteConfirm(game.id)} className="w-8 text-right text-sm opacity-50 hover:opacity-100" style={{ color: c.textMuted }}>✕</button>
+                    </div>
+                    {game.note && <div className="text-xs mt-1 ml-14 italic" style={{ color: c.textMuted }}>{game.note}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
-  };
+  }
 
+  // Main App with Tabs
   return (
-    <div className="min-h-screen p-4 md:p-8" style={{ backgroundColor: c.bg }}>
-      <div className="max-w-2xl mx-auto">
-        
+    <div className="min-h-screen" style={{ backgroundColor: c.bg }}>
+      <div className="max-w-2xl mx-auto p-4 md:p-8 pb-24">
         {/* Toast */}
         {toast && (
-          <div 
-            onClick={toast.type === 'undo' ? undoDelete : undefined}
+          <div onClick={toast.type === 'undo' ? undoDelete : undefined}
             className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-xl shadow-lg cursor-pointer font-medium"
-            style={{ 
-              backgroundColor: toast.type === 'success' ? theme.green : toast.type === 'error' ? theme.red : c.card,
-              color: toast.type === 'success' || toast.type === 'error' ? '#FFFFFF' : c.text,
-              border: toast.type === 'undo' ? `1px solid ${c.border}` : 'none'
-            }}
-          >
+            style={{ backgroundColor: toast.type === 'success' ? theme.green : toast.type === 'error' ? theme.red : c.card, color: toast.type === 'success' || toast.type === 'error' ? '#FFFFFF' : c.text }}>
             {toast.message}
           </div>
         )}
 
         {/* Achievement popup */}
-        {showAchievement && (
+        {showAchievementPopup && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div 
-              className="p-8 rounded-3xl shadow-2xl text-center"
-              style={{ backgroundColor: c.card, animation: 'pulse 0.5s ease-in-out' }}
-            >
-              <div className="text-5xl mb-3">🏆</div>
-              <div className="text-2xl font-bold mb-1" style={{ color: theme.green }}>{showAchievement.title}</div>
-              <div style={{ color: c.textSecondary }}>{showAchievement.subtitle}</div>
-            </div>
-          </div>
-        )}
-
-        {/* Delete Confirm Modal */}
-        {deleteConfirm && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="p-6 rounded-2xl shadow-xl w-full max-w-sm" style={{ backgroundColor: c.card }}>
-              <h3 className="text-lg font-semibold mb-2" style={{ color: c.text }}>Delete Game?</h3>
-              <p className="mb-4" style={{ color: c.textSecondary }}>This will update all stats.</p>
-              <div className="flex gap-3">
-                <button 
-                  onClick={() => setDeleteConfirm(null)} 
-                  className="flex-1 py-2.5 rounded-xl font-medium"
-                  style={{ backgroundColor: c.rowBg, color: c.text }}
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={() => deleteGame(deleteConfirm)} 
-                  className="flex-1 py-2.5 rounded-xl font-medium text-white"
-                  style={{ backgroundColor: theme.red }}
-                >
-                  Delete
-                </button>
-              </div>
+            <div className="p-8 rounded-3xl shadow-2xl text-center" style={{ backgroundColor: c.card }}>
+              <div className="text-5xl mb-3">{showAchievementPopup.icon}</div>
+              <div className="text-2xl font-bold mb-1" style={{ color: theme.green }}>{showAchievementPopup.name}</div>
+              <div style={{ color: c.textSecondary }}>{showAchievementPopup.description}</div>
             </div>
           </div>
         )}
 
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-3xl font-bold" style={{ color: c.text }}>Novuss</h1>
             <p style={{ color: c.textSecondary }}>
-              Logged in as <span style={{ color: theme.green, fontWeight: 600 }}>{currentUser.displayName}</span>
+              Welcome, <span style={{ color: theme.green, fontWeight: 600 }}>{currentUser.display_name}</span>
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button 
-              onClick={() => { setDarkMode(!darkMode); localStorage.setItem('novuss-dark-mode', JSON.stringify(!darkMode)); }}
-              className="w-10 h-10 rounded-xl flex items-center justify-center text-lg"
-              style={{ backgroundColor: c.rowBg, color: c.textSecondary }}
-            >
+            <button onClick={() => { setDarkMode(!darkMode); localStorage.setItem('novuss-dark-mode', JSON.stringify(!darkMode)); }}
+              className="w-10 h-10 rounded-xl flex items-center justify-center text-lg" style={{ backgroundColor: c.rowBg, color: c.textSecondary }}>
               {darkMode ? '☀' : '☾'}
             </button>
-            <button 
-              onClick={handleLogout} 
-              className="px-3 h-10 rounded-xl flex items-center justify-center text-sm font-medium"
-              style={{ backgroundColor: c.rowBg, color: c.textSecondary }}
-            >
+            <button onClick={handleLogout} className="px-3 h-10 rounded-xl flex items-center justify-center text-sm font-medium"
+              style={{ backgroundColor: c.rowBg, color: c.textSecondary }}>
               Logout
             </button>
           </div>
         </div>
 
-        {/* Scoreboard */}
-        <div className="rounded-2xl shadow-sm p-6 mb-6" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
-          <h2 className="text-sm font-medium mb-4 text-center" style={{ color: c.textSecondary }}>All Time</h2>
-          {games.length === 0 ? (
-            <div className="text-center py-8" style={{ color: c.textMuted }}>
-              <p>No games yet. Add your first game below!</p>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center gap-4">
-              <div 
-                className="text-center p-6 rounded-2xl flex-1 transition-all duration-300"
-                style={totalStats.wins1 > totalStats.wins2 
-                  ? { backgroundColor: theme.greenBgStrong, border: `2px solid ${theme.green}` } 
-                  : totalStats.wins1 < totalStats.wins2
-                  ? { backgroundColor: theme.redBg, border: `2px solid ${theme.red}` }
-                  : { backgroundColor: c.rowBg }
-                }
-              >
-                <div className="text-4xl font-bold" style={{ color: totalStats.wins1 > totalStats.wins2 ? theme.green : totalStats.wins1 < totalStats.wins2 ? theme.red : c.text }}>{totalStats.wins1}</div>
-                <div className="text-sm font-medium mt-1" style={{ color: c.textSecondary }}>{players.p1}</div>
-              </div>
-              <div className="text-2xl font-light" style={{ color: c.textMuted }}>:</div>
-              <div 
-                className="text-center p-6 rounded-2xl flex-1 transition-all duration-300"
-                style={totalStats.wins2 > totalStats.wins1 
-                  ? { backgroundColor: theme.greenBgStrong, border: `2px solid ${theme.green}` } 
-                  : totalStats.wins2 < totalStats.wins1
-                  ? { backgroundColor: theme.redBg, border: `2px solid ${theme.red}` }
-                  : { backgroundColor: c.rowBg }
-                }
-              >
-                <div className="text-4xl font-bold" style={{ color: totalStats.wins2 > totalStats.wins1 ? theme.green : totalStats.wins2 < totalStats.wins1 ? theme.red : c.text }}>{totalStats.wins2}</div>
-                <div className="text-sm font-medium mt-1" style={{ color: c.textSecondary }}>{players.p2}</div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Add Game */}
-        <div className="rounded-2xl shadow-sm p-6 mb-6" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
-          <h2 className="text-lg font-semibold mb-4" style={{ color: c.text }}>Add Game</h2>
+        {/* Tab Content */}
+        {activeTab === 'matchups' && (
           <div className="space-y-4">
-            <div className="flex gap-2">
-              <input 
-                type="date" 
-                value={date} 
-                onChange={(e) => setDate(e.target.value)} 
-                className="flex-1 p-3 rounded-xl"
-                style={{ backgroundColor: c.inputBg, color: c.text, border: `1px solid ${c.border}` }} 
-              />
-              <button 
-                onClick={() => setDate(todayStr)} 
-                className="px-4 rounded-xl font-medium"
-                style={date === todayStr 
-                  ? { backgroundColor: c.buttonBg, color: c.buttonText } 
-                  : { backgroundColor: c.rowBg, color: c.text, border: `1px solid ${c.border}` }
-                }
-              >
-                Today
-              </button>
-            </div>
-            <div>
-              <button onClick={() => setShowNoteInput(!showNoteInput)} className="text-sm" style={{ color: c.textSecondary }}>
-                + {showNoteInput ? 'Hide note' : 'Add note'}
-              </button>
-              {showNoteInput && (
-                <input 
-                  type="text" 
-                  placeholder="e.g., Lunch break game..." 
-                  value={note} 
-                  onChange={(e) => setNote(e.target.value)} 
-                  className="w-full mt-2 p-3 rounded-xl"
-                  style={{ backgroundColor: c.inputBg, color: c.text, border: `1px solid ${c.border}` }} 
-                  maxLength={100} 
-                />
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <button 
-                onClick={() => addGame('p1')} 
-                className="py-4 font-semibold rounded-xl transition-transform active:scale-95"
-                style={{ backgroundColor: c.buttonBg, color: c.buttonText }}
-              >
-                {players.p1} won
-              </button>
-              <button 
-                onClick={() => addGame('p2')} 
-                className="py-4 font-semibold rounded-xl transition-transform active:scale-95"
-                style={{ backgroundColor: c.buttonBg, color: c.buttonText }}
-              >
-                {players.p2} won
-              </button>
-            </div>
+            <h2 className="text-lg font-semibold" style={{ color: c.text }}>Your Matchups</h2>
+            {opponents.length === 0 ? (
+              <div className="rounded-2xl p-8 text-center" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
+                <p style={{ color: c.textMuted }}>No other players yet</p>
+              </div>
+            ) : (
+              <div className="grid gap-3">
+                {opponents.map(opponent => {
+                  const stats = getH2HStats(opponent.id);
+                  const isWinning = stats.myWins > stats.theirWins;
+                  const isLosing = stats.myWins < stats.theirWins;
+                  
+                  return (
+                    <button
+                      key={opponent.id}
+                      onClick={() => setSelectedOpponent(opponent)}
+                      className="w-full p-4 rounded-2xl text-left transition-transform active:scale-[0.98]"
+                      style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold"
+                            style={{ backgroundColor: c.rowBg, color: c.text }}>
+                            {opponent.display_name.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="font-semibold" style={{ color: c.text }}>{opponent.display_name}</div>
+                            {stats.lastGame ? (
+                              <div className="text-xs" style={{ color: c.textMuted }}>
+                                Last played: {new Date(stats.lastGame.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                              </div>
+                            ) : (
+                              <div className="text-xs" style={{ color: c.textMuted }}>No games yet</div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {stats.total > 0 ? (
+                            <div className="text-right">
+                              <div className="flex items-center gap-1">
+                                <span className="text-xl font-bold" style={{ color: isWinning ? theme.green : isLosing ? theme.red : c.text }}>{stats.myWins}</span>
+                                <span style={{ color: c.textMuted }}>-</span>
+                                <span className="text-xl font-bold" style={{ color: isLosing ? theme.green : isWinning ? theme.red : c.text }}>{stats.theirWins}</span>
+                              </div>
+                              <div className="text-xs" style={{ color: c.textMuted }}>{stats.total} games</div>
+                            </div>
+                          ) : (
+                            <div className="text-sm px-3 py-1 rounded-lg" style={{ backgroundColor: c.rowBg, color: c.textMuted }}>
+                              Start playing
+                            </div>
+                          )}
+                          <span style={{ color: c.textMuted }}>→</span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </div>
-
-        {/* Stats */}
-        {games.length > 0 && (
-          <React.Fragment>
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <StatBox title="This Week" stats={weeklyStats} period="this week" />
-              <StatBox title="This Month" stats={monthlyStats} period="this month" />
-            </div>
-
-            {streak && streak.count >= 3 && (
-              <div className="rounded-2xl shadow-sm p-5 mb-6 text-center" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
-                <span className="text-2xl font-bold" style={{ color: theme.green }}>{streak.player}</span>
-                <span className="text-lg ml-2" style={{ color: c.textSecondary }}>is on a</span>
-                <span className="text-2xl font-bold ml-2" style={{ color: theme.green }}>{streak.count} game</span>
-                <span className="text-lg ml-1" style={{ color: c.textSecondary }}>streak!</span>
-              </div>
-            )}
-
-            <div className="grid grid-cols-3 gap-3 mb-6">
-              {/* Win Rate */}
-              <div className="rounded-2xl shadow-sm p-4" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
-                <h3 className="text-xs font-medium mb-3" style={{ color: c.textSecondary }}>Win Rate</h3>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs" style={{ color: c.textSecondary }}>{players.p1}</span>
-                    <div className="flex items-center gap-1">
-                      <span className="text-base font-bold" style={{ color: winPct.p1 >= winPct.p2 ? theme.green : theme.red }}>{winPct.p1}%</span>
-                      {winRateTrend && winRateTrend.p1 !== 0 && (
-                        <span className="text-xs" style={{ color: winRateTrend.p1 > 0 ? theme.green : theme.red }}>
-                          {winRateTrend.p1 > 0 ? '↑' : '↓'}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs" style={{ color: c.textSecondary }}>{players.p2}</span>
-                    <div className="flex items-center gap-1">
-                      <span className="text-base font-bold" style={{ color: winPct.p2 > winPct.p1 ? theme.green : theme.red }}>{winPct.p2}%</span>
-                      {winRateTrend && winRateTrend.p2 !== 0 && (
-                        <span className="text-xs" style={{ color: winRateTrend.p2 > 0 ? theme.green : theme.red }}>
-                          {winRateTrend.p2 > 0 ? '↑' : '↓'}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Best Streak */}
-              <div className="rounded-2xl shadow-sm p-4" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
-                <h3 className="text-xs font-medium mb-3" style={{ color: c.textSecondary }}>Best Streak</h3>
-                <div className="text-center">
-                  <div className="text-base" style={{ color: theme.green }}>★</div>
-                  <div className="text-sm font-bold" style={{ color: theme.green }}>{bestStreaks.p1 >= bestStreaks.p2 ? players.p1 : players.p2}</div>
-                  <div className="text-base font-bold" style={{ color: c.text }}>{Math.max(bestStreaks.p1, bestStreaks.p2)}</div>
-                </div>
-              </div>
-
-              {/* Last 5 */}
-              <div className="rounded-2xl shadow-sm p-4" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
-                <h3 className="text-xs font-medium mb-3" style={{ color: c.textSecondary }}>Last 5</h3>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs" style={{ color: c.textSecondary }}>{players.p1}</span>
-                    <span className="text-base font-bold" style={{ color: recentForm.p1 >= recentForm.p2 ? theme.green : theme.red }}>{recentForm.p1}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs" style={{ color: c.textSecondary }}>{players.p2}</span>
-                    <span className="text-base font-bold" style={{ color: recentForm.p2 > recentForm.p1 ? theme.green : theme.red }}>{recentForm.p2}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Monthly Chart */}
-            {monthlyBreakdown.length > 1 && (
-              <div className="mb-6">
-                <MonthlyChart data={monthlyBreakdown} />
-              </div>
-            )}
-          </React.Fragment>
         )}
 
-        {/* History */}
-        <div className="rounded-2xl shadow-sm p-6" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
-          <h2 className="text-lg font-semibold mb-4" style={{ color: c.text }}>Game History ({games.length})</h2>
-          {games.length === 0 ? (
-            <div className="text-center py-8" style={{ color: c.textMuted }}>Your game history will appear here.</div>
-          ) : (
-            <div className="space-y-2">
-              {games.map((game) => (
-                <div 
-                  key={game.id} 
-                  className="p-3 rounded-xl transition-all duration-500"
-                  style={{ 
-                    backgroundColor: justAdded === game.id ? theme.greenBg : c.rowBg,
-                    transform: justAdded === game.id ? 'scale(1.02)' : 'scale(1)',
-                  }}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm w-14" style={{ color: c.textMuted }}>
-                      {new Date(game.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                    </div>
-                    <div className="flex items-center gap-2 flex-1 justify-center">
-                      <span className="text-sm font-medium" style={{ color: game.winner === 'p1' ? c.text : c.textMuted }}>{players.p1}</span>
-                      <span 
-                        className="text-xs font-bold px-2 py-1 rounded"
-                        style={{ 
-                          backgroundColor: game.winner === 'p1' ? theme.greenBg : theme.redBg,
-                          color: game.winner === 'p1' ? theme.green : theme.red
-                        }}
-                      >
-                        {game.winner === 'p1' ? 'W' : 'L'}
-                      </span>
-                      <span style={{ color: c.textMuted }}>–</span>
-                      <span 
-                        className="text-xs font-bold px-2 py-1 rounded"
-                        style={{ 
-                          backgroundColor: game.winner === 'p2' ? theme.greenBg : theme.redBg,
-                          color: game.winner === 'p2' ? theme.green : theme.red
-                        }}
-                      >
-                        {game.winner === 'p2' ? 'W' : 'L'}
-                      </span>
-                      <span className="text-sm font-medium" style={{ color: game.winner === 'p2' ? c.text : c.textMuted }}>{players.p2}</span>
-                    </div>
-                    <button 
-                      onClick={() => setDeleteConfirm(game.id)} 
-                      className="w-8 text-right text-sm opacity-50 hover:opacity-100"
-                      style={{ color: c.textMuted }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  {game.note && <div className="text-xs mt-1 ml-14 italic" style={{ color: c.textMuted }}>{game.note}</div>}
-                </div>
-              ))}
+        {activeTab === 'leaderboard' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold" style={{ color: c.text }}>Leaderboard</h2>
+              <div className="flex gap-1 p-1 rounded-xl" style={{ backgroundColor: c.rowBg }}>
+                {['week', 'month', 'all'].map(period => (
+                  <button
+                    key={period}
+                    onClick={() => setLeaderboardPeriod(period)}
+                    className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                    style={leaderboardPeriod === period ? { backgroundColor: c.card, color: c.text } : { color: c.textMuted }}
+                  >
+                    {period === 'week' ? 'Week' : period === 'month' ? 'Month' : 'All Time'}
+                  </button>
+                ))}
+              </div>
             </div>
-          )}
-        </div>
+            
+            <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
+              {getLeaderboardData().length === 0 ? (
+                <div className="p-8 text-center" style={{ color: c.textMuted }}>
+                  No games played {leaderboardPeriod === 'week' ? 'this week' : leaderboardPeriod === 'month' ? 'this month' : 'yet'}
+                </div>
+              ) : (
+                getLeaderboardData().map((entry, index) => {
+                  const isCurrentUser = entry.player.id === currentUser.id;
+                  const medalColors = [theme.gold, theme.silver, theme.bronze];
+                  const medal = index < 3 ? ['🥇', '🥈', '🥉'][index] : null;
+                  
+                  return (
+                    <div
+                      key={entry.player.id}
+                      className="flex items-center gap-4 p-4"
+                      style={{
+                        backgroundColor: isCurrentUser ? theme.greenBg : 'transparent',
+                        borderBottom: index < getLeaderboardData().length - 1 ? `1px solid ${c.border}` : 'none'
+                      }}
+                    >
+                      <div className="w-8 text-center">
+                        {medal ? (
+                          <span className="text-xl">{medal}</span>
+                        ) : (
+                          <span className="text-sm font-medium" style={{ color: c.textMuted }}>{index + 1}</span>
+                        )}
+                      </div>
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold"
+                        style={{ backgroundColor: c.rowBg, color: isCurrentUser ? theme.green : c.text }}>
+                        {entry.player.display_name.charAt(0)}
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-semibold" style={{ color: isCurrentUser ? theme.green : c.text }}>
+                          {entry.player.display_name}
+                          {isCurrentUser && <span className="ml-2 text-xs">(You)</span>}
+                        </div>
+                        <div className="text-xs" style={{ color: c.textMuted }}>
+                          {entry.games} games • {entry.games > 0 ? Math.round((entry.wins / entry.games) * 100) : 0}% win rate
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold" style={{ color: index === 0 ? theme.green : c.text }}>{entry.wins}</div>
+                        <div className="text-xs" style={{ color: c.textMuted }}>wins</div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
 
-        <div className="mt-8 text-center text-xs" style={{ color: c.textMuted }}>Total: {games.length} games</div>
+        {activeTab === 'achievements' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold" style={{ color: c.text }}>Achievements</h2>
+              <div className="text-sm" style={{ color: c.textSecondary }}>
+                {achievements.length} / {ACHIEVEMENTS.length} unlocked
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              {ACHIEVEMENTS.map(achievement => {
+                const unlockedAchievement = achievements.find(a => a.achievement_key === achievement.key);
+                const isUnlocked = !!unlockedAchievement;
+                
+                return (
+                  <div
+                    key={achievement.key}
+                    className="p-4 rounded-2xl transition-all"
+                    style={{
+                      backgroundColor: isUnlocked ? c.card : c.rowBg,
+                      border: `1px solid ${isUnlocked ? theme.green : c.border}`,
+                      opacity: isUnlocked ? 1 : 0.6
+                    }}
+                  >
+                    <div className="text-3xl mb-2" style={{ filter: isUnlocked ? 'none' : 'grayscale(1)' }}>
+                      {achievement.icon}
+                    </div>
+                    <div className="font-semibold text-sm mb-1" style={{ color: isUnlocked ? c.text : c.textMuted }}>
+                      {achievement.name}
+                    </div>
+                    <div className="text-xs" style={{ color: c.textMuted }}>
+                      {achievement.description}
+                    </div>
+                    {isUnlocked && (
+                      <div className="text-xs mt-2" style={{ color: theme.green }}>
+                        ✓ {new Date(unlockedAchievement.unlocked_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom Tab Bar */}
+      <div className="fixed bottom-0 left-0 right-0 border-t" style={{ backgroundColor: c.card, borderColor: c.border }}>
+        <div className="max-w-2xl mx-auto flex">
+          {[
+            { id: 'matchups', label: 'Matchups', icon: '⚔️' },
+            { id: 'leaderboard', label: 'Leaderboard', icon: '🏆' },
+            { id: 'achievements', label: 'Achievements', icon: '🎖️' },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className="flex-1 py-3 flex flex-col items-center gap-1 transition-colors"
+              style={{ color: activeTab === tab.id ? theme.green : c.textMuted }}
+            >
+              <span className="text-xl">{tab.icon}</span>
+              <span className="text-xs font-medium">{tab.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
