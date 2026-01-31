@@ -97,13 +97,19 @@ export default function App() {
     const { data, error } = await supabase
       .from('players')
       .select('*')
-      .order('first_name');
+      .order('display_name');
     
     if (error) {
       console.error('Error loading players:', error);
       return;
     }
     setPlayers(data || []);
+  };
+
+  // Helper to get first name from display_name (e.g., "Emils B." -> "Emils")
+  const getFirstName = (player) => {
+    if (!player) return '';
+    return player.display_name.split(' ')[0];
   };
 
   const loadGames = async () => {
@@ -135,7 +141,8 @@ export default function App() {
   };
 
   const generateDisplayName = (firstName, lastName) => {
-    const baseName = `${firstName} ${lastName.charAt(0)}.`;
+    if (!lastName) return firstName; // If no last name provided
+    const baseName = `${firstName} ${lastName.charAt(0).toUpperCase()}.`;
     // Check for collision
     const existing = players.filter(p => p.display_name === baseName);
     if (existing.length === 0) return baseName;
@@ -169,8 +176,8 @@ export default function App() {
       return;
     }
     
-    // For new users, check by first name (they would have registered)
-    const player = players.find(p => p.first_name.toLowerCase() === loginForm.username.toLowerCase());
+    // For new users, check by username (they would have registered)
+    const player = players.find(p => p.username.toLowerCase() === loginForm.username.toLowerCase());
     if (player) {
       // TODO: In future, verify password against stored hash
       setCurrentUser(player);
@@ -179,7 +186,7 @@ export default function App() {
         localStorage.setItem('novuss_user', JSON.stringify(player));
       }
     } else {
-      setAuthError('Invalid name or password');
+      setAuthError('Invalid username or password');
     }
   };
 
@@ -207,8 +214,7 @@ export default function App() {
     const { data, error } = await supabase
       .from('players')
       .insert([{
-        first_name: registerForm.firstName.trim(),
-        last_name: registerForm.lastName.trim(),
+        username: registerForm.firstName.trim().toLowerCase(),
         display_name: newDisplayName,
       }])
       .select()
@@ -940,7 +946,7 @@ export default function App() {
                     <div className="mb-4 text-center">
                       <span className="text-xs px-3 py-1.5 rounded-full font-medium inline-flex items-center gap-1" 
                         style={{ backgroundColor: streakData.myCurrent >= 3 ? theme.greenBg : c.rowBg, color: streakData.myCurrent >= 3 ? theme.green : c.textSecondary }}>
-                        🔥 {streakData.myCurrent >= 3 ? `You have a ${streakData.myCurrent} win streak` : `${selectedOpponent.first_name} has a ${streakData.theirCurrent} win streak`}
+                        🔥 {streakData.myCurrent >= 3 ? `You have a ${streakData.myCurrent} win streak` : `${getFirstName(selectedOpponent)} has a ${streakData.theirCurrent} win streak`}
                       </span>
                     </div>
                   )}
@@ -954,7 +960,7 @@ export default function App() {
                     <div className="text-2xl font-light" style={{ color: c.textMuted }}>:</div>
                     <div className="text-center">
                       <div className="text-4xl font-bold" style={{ color: c.text }}>{theirWins}</div>
-                      <div className="text-sm mt-1" style={{ color: c.textSecondary }}>{selectedOpponent.first_name}</div>
+                      <div className="text-sm mt-1" style={{ color: c.textSecondary }}>{getFirstName(selectedOpponent)}</div>
                     </div>
                   </div>
                   
@@ -981,11 +987,11 @@ export default function App() {
             <div className="grid grid-cols-2 gap-3 mb-3">
               <button onClick={() => handleWinnerSelect(currentUser.id)} className="py-3 font-semibold rounded-xl transition-all"
                 style={selectedWinner === currentUser.id ? { backgroundColor: theme.green, color: '#FFFFFF' } : { backgroundColor: c.rowBg, color: c.text }}>
-                {currentUser.first_name} won
+                {getFirstName(currentUser)} won
               </button>
               <button onClick={() => handleWinnerSelect(selectedOpponent.id)} className="py-3 font-semibold rounded-xl transition-all"
                 style={selectedWinner === selectedOpponent.id ? { backgroundColor: theme.green, color: '#FFFFFF' } : { backgroundColor: c.rowBg, color: c.text }}>
-                {selectedOpponent.first_name} won
+                {getFirstName(selectedOpponent)} won
               </button>
             </div>
 
@@ -1058,11 +1064,11 @@ export default function App() {
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold" 
                           style={{ backgroundColor: isMe ? theme.greenBg : c.rowBg, color: isMe ? theme.green : c.text }}>
-                          {recordHolder.first_name.charAt(0)}
+                          {getFirstName(recordHolder).charAt(0)}
                         </div>
                         <div>
                           <div className="font-medium" style={{ color: c.text }}>
-                            {recordHolder.first_name} {isMe && <span className="text-xs" style={{ color: theme.green }}>(You)</span>}
+                            {getFirstName(recordHolder)} {isMe && <span className="text-xs" style={{ color: theme.green }}>(You)</span>}
                           </div>
                           {recordDate && (
                             <div className="text-xs" style={{ color: c.textMuted }}>
@@ -1082,7 +1088,7 @@ export default function App() {
               {streakData.myBest > 0 && streakData.theirBest > 0 && streakData.myBest !== streakData.theirBest && (
                 <div className="mt-3 pt-3 border-t flex items-center justify-between" style={{ borderColor: c.border }}>
                   <div className="text-xs" style={{ color: c.textMuted }}>
-                    {streakData.myBest > streakData.theirBest ? selectedOpponent.first_name : 'Your'} best: {streakData.myBest > streakData.theirBest ? streakData.theirBest : streakData.myBest} wins
+                    {streakData.myBest > streakData.theirBest ? getFirstName(selectedOpponent) : 'Your'} best: {streakData.myBest > streakData.theirBest ? streakData.theirBest : streakData.myBest} wins
                   </div>
                 </div>
               )}
@@ -1121,7 +1127,7 @@ export default function App() {
                       <div className="flex items-center justify-between">
                         <div className="text-sm w-16" style={{ color: c.textMuted }}>{new Date(game.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</div>
                         <div className="flex items-center gap-2 flex-1 justify-center">
-                          <span className="text-sm" style={{ color: iWon ? c.text : c.textMuted }}>{currentUser.first_name}</span>
+                          <span className="text-sm" style={{ color: iWon ? c.text : c.textMuted }}>{getFirstName(currentUser)}</span>
                           <span className="text-xs font-bold px-2 py-1 rounded min-w-[40px] text-center" style={{ backgroundColor: iWon ? theme.greenBg : theme.redBg, color: iWon ? theme.green : theme.red }}>
                             {iWon ? '+' : '−'}{margin || 0}
                           </span>
@@ -1129,7 +1135,7 @@ export default function App() {
                           <span className="text-xs font-bold px-2 py-1 rounded min-w-[40px] text-center" style={{ backgroundColor: !iWon ? theme.greenBg : theme.redBg, color: !iWon ? theme.green : theme.red }}>
                             {!iWon ? '+' : '−'}{margin || 0}
                           </span>
-                          <span className="text-sm" style={{ color: !iWon ? c.text : c.textMuted }}>{selectedOpponent.first_name}</span>
+                          <span className="text-sm" style={{ color: !iWon ? c.text : c.textMuted }}>{getFirstName(selectedOpponent)}</span>
                         </div>
                         <button onClick={() => setDeleteConfirm(game.id)} className="text-sm opacity-50 hover:opacity-100 w-8 text-right" style={{ color: c.textMuted }}>✕</button>
                       </div>
@@ -1162,7 +1168,7 @@ export default function App() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold" style={{ color: c.text }}>Novuss</h1>
-            <p style={{ color: c.textSecondary }}>Welcome, <span style={{ color: theme.green, fontWeight: 600 }}>{currentUser.first_name}</span></p>
+            <p style={{ color: c.textSecondary }}>Welcome, <span style={{ color: theme.green, fontWeight: 600 }}>{getFirstName(currentUser)}</span></p>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => setDarkMode(!darkMode)} className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: c.rowBg, color: c.textSecondary }}>{darkMode ? '☀' : '☾'}</button>
@@ -1181,7 +1187,7 @@ export default function App() {
                 <button key={opponent.id} onClick={() => setSelectedOpponent(opponent)} className="w-full p-4 rounded-2xl text-left active:scale-[0.98] transition-transform" style={{ backgroundColor: c.card, border: `1px solid ${c.border}` }}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold" style={{ backgroundColor: c.rowBg, color: c.text }}>{opponent.first_name.charAt(0)}</div>
+                      <div className="w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold" style={{ backgroundColor: c.rowBg, color: c.text }}>{getFirstName(opponent).charAt(0)}</div>
                       <div>
                         <div className="font-semibold flex items-center gap-2" style={{ color: c.text }}>
                           {opponent.display_name}
@@ -1233,7 +1239,7 @@ export default function App() {
                   return (
                     <div key={entry.player.id} className="flex items-center gap-4 p-4" style={{ backgroundColor: isCurrentUser ? theme.greenBg : 'transparent', borderBottom: index < getLeaderboardData().length - 1 ? `1px solid ${c.border}` : 'none' }}>
                       <div className="w-8 text-center">{medal ? <span className="text-xl">{medal}</span> : <span className="text-sm font-medium" style={{ color: c.textMuted }}>{index + 1}</span>}</div>
-                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold" style={{ backgroundColor: c.rowBg, color: isCurrentUser ? theme.green : c.text }}>{entry.player.first_name.charAt(0)}</div>
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold" style={{ backgroundColor: c.rowBg, color: isCurrentUser ? theme.green : c.text }}>{getFirstName(entry.player).charAt(0)}</div>
                       <div className="flex-1">
                         <div className="font-semibold" style={{ color: isCurrentUser ? theme.green : c.text }}>{entry.player.display_name}{isCurrentUser && <span className="ml-2 text-xs">(You)</span>}</div>
                         <div className="text-xs" style={{ color: c.textMuted }}>{entry.games} games · {entry.winRate}% win rate</div>
