@@ -3,6 +3,13 @@ import { supabase } from './supabaseClient';
 
 const INVITE_CODE = 'novuss2025';
 
+// Existing user credentials (for backwards compatibility)
+const USER_CREDENTIALS = {
+  emils: { password: 'emils123', playerId: '11111111-1111-1111-1111-111111111111' },
+  peteris: { password: 'peteris123', playerId: '22222222-2222-2222-2222-222222222222' },
+  emilssarmulis: { password: 'riskemils123', playerId: '33333333-3333-3333-3333-333333333333' },
+};
+
 // Achievements with target values for progress tracking
 const ACHIEVEMENTS = [
   { key: 'first_blood', name: 'First Blood', description: 'Win your first game', icon: '🎯', category: 'Wins', target: 1, type: 'wins' },
@@ -142,10 +149,30 @@ export default function App() {
   };
 
   const handleLogin = async () => {
+    // Check if this is an existing user with hardcoded credentials
+    const creds = USER_CREDENTIALS[loginForm.username.toLowerCase()];
+    if (creds) {
+      if (creds.password === loginForm.password) {
+        const player = players.find(p => p.id === creds.playerId);
+        if (player) {
+          setCurrentUser(player);
+          setAuthError('');
+          if (rememberMe) {
+            localStorage.setItem('novuss_user', JSON.stringify(player));
+          }
+        } else {
+          setAuthError('Player not found in database');
+        }
+      } else {
+        setAuthError('Invalid password');
+      }
+      return;
+    }
+    
+    // For new users, check by first name (they would have registered)
     const player = players.find(p => p.first_name.toLowerCase() === loginForm.username.toLowerCase());
     if (player) {
-      // In production, you'd verify password here with Supabase Auth
-      // For now, we just check if player exists
+      // TODO: In future, verify password against stored hash
       setCurrentUser(player);
       setAuthError('');
       if (rememberMe) {
