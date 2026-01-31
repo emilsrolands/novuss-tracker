@@ -1268,7 +1268,13 @@ export default function App() {
           <div className="space-y-3 pb-8">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold" style={{ color: c.text }}>Achievements</h2>
-              <div className="text-sm" style={{ color: c.textSecondary }}>{achievements.length} / {ACHIEVEMENTS.length}</div>
+              <div className="text-sm" style={{ color: c.textSecondary }}>
+                {ACHIEVEMENTS.filter(a => {
+                  const unlocked = achievements.find(u => u.achievement_key === a.key);
+                  const progress = getAchievementProgress(a);
+                  return !!unlocked || progress.current >= progress.target;
+                }).length} / {ACHIEVEMENTS.length}
+              </div>
             </div>
             
             {/* Group by category */}
@@ -1282,8 +1288,9 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-3">
                     {categoryAchievements.map(achievement => {
                       const unlockedAchievement = achievements.find(a => a.achievement_key === achievement.key);
-                      const isUnlocked = !!unlockedAchievement;
                       const progress = getAchievementProgress(achievement);
+                      // Consider unlocked if in database OR if progress meets target
+                      const isUnlocked = !!unlockedAchievement || progress.current >= progress.target;
                       
                       return (
                         <div key={achievement.key} className="p-4 rounded-2xl" style={{ backgroundColor: isUnlocked ? c.card : c.rowBg, border: `1px solid ${isUnlocked ? theme.green : c.border}`, opacity: isUnlocked ? 1 : 0.8 }}>
@@ -1293,7 +1300,9 @@ export default function App() {
                           
                           {isUnlocked ? (
                             <div className="text-xs" style={{ color: theme.green }}>
-                              ✓ {new Date(unlockedAchievement.unlocked_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                              ✓ {unlockedAchievement 
+                                ? new Date(unlockedAchievement.unlocked_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                                : 'Unlocked'}
                             </div>
                           ) : (
                             <div>
