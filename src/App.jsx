@@ -265,6 +265,7 @@ export default function App() {
       player1_id: currentUser.id,
       player2_id: selectedOpponent.id,
       winner_id: selectedWinner,
+      winner: selectedWinner === currentUser.id ? 'p1' : 'p2',
       margin: selectedMargin,
       note: note.trim() || null
     };
